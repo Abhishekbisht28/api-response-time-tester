@@ -204,9 +204,15 @@ jobs:
         if: always() && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const output = fs.readFileSync('mvn-output.txt', 'utf8');
+            let output = '';
+            try {
+              output = fs.readFileSync('mvn-output.txt', 'utf8');
+            } catch (e) {
+              output = '';
+            }
 
             // Extract summary line from Maven output
             const passMatch  = output.match(/Passed=(\d+)/);
@@ -256,3 +262,4 @@ jobs:
             target/failsafe-reports/
             mvn-output.txt
           retention-days: 30
+          if-no-files-found: warn    # ← ADD THIS LINE
