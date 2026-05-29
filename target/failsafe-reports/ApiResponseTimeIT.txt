@@ -1,8 +1,8 @@
 -------------------------------------------------------------------------------
 Test set: ApiResponseTimeIT
 -------------------------------------------------------------------------------
-Tests run: 1, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 13.40 s <<< FAILURE! -- in ApiResponseTimeIT
-ApiResponseTimeIT.testAllApiResponseTimes -- Time elapsed: 12.57 s <<< FAILURE!
+Tests run: 1, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 8.877 s <<< FAILURE! -- in ApiResponseTimeIT
+ApiResponseTimeIT.testAllApiResponseTimes -- Time elapsed: 8.375 s <<< FAILURE!
 org.opentest4j.AssertionFailedError: ❌ Merge Blocked! 20 API(s) failed. 1 exceeded 800ms, 20 returned wrong status code. Check email report for details.
 	at org.junit.jupiter.api.AssertionUtils.fail(AssertionUtils.java:38)
 	at org.junit.jupiter.api.Assertions.fail(Assertions.java:134)

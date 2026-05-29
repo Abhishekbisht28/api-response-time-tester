@@ -1,20 +1,25 @@
 name: API Response Time Gate
 
 on:
+  # Called by testapi's api-gate.yml on every PR
+  workflow_call:
+
+  # Also runnable directly from this repo for debugging
   pull_request:
-    branches: [ main, develop ]
-  push:
-    branches: [ main ]
+    branches: [ main, master, develop ]
+    types: [ opened, synchronize, reopened ]
 
 jobs:
   api-response-time-test:
     runs-on: ubuntu-latest
 
+    # This name must match exactly what you set as the required status check
+    # in: Settings → Branches → Branch protection rules → "Require status checks"
+    # Add: "api-response-time-test / api-response-time-test"
+
     env:
-      # ── EDIT THESE TWO LINES ──────────────────────────────────────────────
-      DJANGO_REPO: Abhishekbisht28/testapi  # e.g. Abhishekbisht28/my-django-app
-      DJANGO_DIR:  testapi                            # local folder name after checkout
-      # ─────────────────────────────────────────────────────────────────────
+      DJANGO_REPO: Abhishekbisht28/testapi
+      DJANGO_DIR:  testapi
 
     steps:
 
@@ -22,11 +27,7 @@ jobs:
       - name: Checkout Tester Repo
         uses: actions/checkout@v4
 
-      # ── 2. Checkout your Django repo (private) ────────────────────────────
-      #       Uses a Personal Access Token stored as a GitHub Secret.
-      #       Go to: Settings → Secrets → Actions → New secret
-      #       Name it DJANGO_REPO_TOKEN, paste your PAT as the value.
-      #       (Create PAT at: github.com/settings/tokens → Contents: read)
+      # ── 2. Checkout Django (testapi) repo ────────────────────────────────
       - name: Checkout Django Repo
         uses: actions/checkout@v4
         with:
@@ -40,7 +41,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      # ── 4. Install Django dependencies (auto-detects all formats) ─────────
+      # ── 4. Install Django Dependencies ───────────────────────────────────
       - name: Install Django Dependencies
         working-directory: ${{ env.DJANGO_DIR }}
         run: |
@@ -49,72 +50,98 @@ jobs:
           if [ -f requirements.txt ]; then
             echo "📦 Installing from requirements.txt"
             pip install -r requirements.txt
-
           elif [ -f Pipfile ]; then
             echo "📦 Installing from Pipfile"
             pip install pipenv
             pipenv install --deploy --ignore-pipfile
-            # Make packages available outside virtualenv
             pip install -r <(pipenv requirements)
-
           elif [ -f pyproject.toml ]; then
             echo "📦 Installing from pyproject.toml (Poetry)"
             pip install poetry
             poetry config virtualenvs.create false
             poetry install --no-interaction --no-ansi
-
           else
             echo "⚠ No dependency file found. Installing Django + DRF only."
             pip install django djangorestframework
           fi
 
-      # ── 5. Apply Django migrations ────────────────────────────────────────
+      # ── 5. Run Django migrations ──────────────────────────────────────────
       - name: Apply Django Migrations
         working-directory: ${{ env.DJANGO_DIR }}
         env:
-          DJANGO_SETTINGS_MODULE: ${{ secrets.DJANGO_SETTINGS_MODULE }}  # e.g. myapp.settings
+          DJANGO_SETTINGS_MODULE: ${{ secrets.DJANGO_SETTINGS_MODULE }}
           SECRET_KEY:             ${{ secrets.DJANGO_SECRET_KEY }}
           DEBUG:                  "True"
-          DATABASE_URL:           ${{ secrets.DATABASE_URL }}             # optional
         run: |
-          # Auto-detect the manage.py location
           MANAGE=$(find . -name "manage.py" | head -1)
           if [ -z "$MANAGE" ]; then
-            echo "❌ manage.py not found in ${{ env.DJANGO_DIR }}"
+            echo "❌ manage.py not found"
             exit 1
           fi
           echo "✅ Found manage.py at: $MANAGE"
           python "$MANAGE" migrate --run-syncdb --no-input
 
-      # ── 6. Start Django server in background ──────────────────────────────
+      # ── 6. Seed test data ─────────────────────────────────────────────────
+      #       Creates categories, products, orders so {pk}=1 actually exists
+      #       and GET /api/categories/1/ returns 200 (not 404).
+      - name: Seed Test Data
+        working-directory: ${{ env.DJANGO_DIR }}
+        env:
+          DJANGO_SETTINGS_MODULE: ${{ secrets.DJANGO_SETTINGS_MODULE }}
+          SECRET_KEY:             ${{ secrets.DJANGO_SECRET_KEY }}
+          DEBUG:                  "True"
+        run: |
+          MANAGE=$(find . -name "manage.py" | head -1)
+          # Run seed.py if it exists
+          if [ -f seed.py ]; then
+            echo "🌱 Running seed.py..."
+            python seed.py
+          else
+            # Minimal inline seed so detail endpoints (/{pk}/) return 200
+            echo "🌱 Running inline seed..."
+            python "$MANAGE" shell -c "
+          from store.models import Category, Product, Order
+          import decimal
+
+          cat, _ = Category.objects.get_or_create(id=1, defaults={'name': 'Electronics', 'description': 'Electronic items'})
+          prod, _ = Product.objects.get_or_create(id=1, defaults={'name': 'Test Widget', 'description': 'A test product', 'price': decimal.Decimal('9.99'), 'stock': 100, 'category': cat})
+          order, _ = Order.objects.get_or_create(id=1, defaults={'customer_name': 'Test User', 'customer_email': 'test@example.com', 'total_amount': decimal.Decimal('9.99'), 'status': 'pending'})
+          print('Seeded: Category=', cat.id, 'Product=', prod.id, 'Order=', order.id)
+          "
+          fi
+
+      # ── 7. Start Django server ────────────────────────────────────────────
       - name: Start Django Server
         working-directory: ${{ env.DJANGO_DIR }}
         env:
           DJANGO_SETTINGS_MODULE: ${{ secrets.DJANGO_SETTINGS_MODULE }}
           SECRET_KEY:             ${{ secrets.DJANGO_SECRET_KEY }}
           DEBUG:                  "True"
-          DATABASE_URL:           ${{ secrets.DATABASE_URL }}
         run: |
           MANAGE=$(find . -name "manage.py" | head -1)
           python "$MANAGE" runserver 0.0.0.0:8000 &
+
           echo "⏳ Waiting for Django to be ready..."
-          # Poll until the server responds (max 30 seconds)
           for i in $(seq 1 30); do
-            if curl -s http://localhost:8000 > /dev/null 2>&1; then
-              echo "✅ Django server is up!"
+            if curl -sf http://localhost:8000/api/health/ > /dev/null 2>&1; then
+              echo "✅ Django server is up! (attempt $i)"
               break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "❌ Django server did not start in 30 seconds"
+              exit 1
             fi
             sleep 1
           done
 
-      # ── 7. Set up Java 17 ─────────────────────────────────────────────────
+      # ── 8. Set up Java 17 ─────────────────────────────────────────────────
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           java-version:  '17'
           distribution:  'temurin'
 
-      # ── 8. Cache Maven dependencies ───────────────────────────────────────
+      # ── 9. Cache Maven dependencies ───────────────────────────────────────
       - name: Cache Maven Dependencies
         uses: actions/cache@v3
         with:
@@ -123,36 +150,109 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-maven-
 
-      # ── 9. Patch apis.json to point at the checked-out Django source ──────
-      #       ApiScanner reads projectPath to find urls.py files.
-      #       We overwrite it at runtime so you never need to hardcode a path.
+      # ── 10. Patch apis.json with real project path ────────────────────────
       - name: Configure Scanner Path
         run: |
           DJANGO_ABS="${{ github.workspace }}/${{ env.DJANGO_DIR }}"
           echo "🔧 Setting projectPath → $DJANGO_ABS"
-          # Use Python (already installed) to do safe JSON editing
           python3 - <<PYEOF
           import json, pathlib
           cfg = pathlib.Path("src/test/resources/apis.json")
           data = json.loads(cfg.read_text())
           data["scanConfig"]["projectPath"] = "$DJANGO_ABS"
           cfg.write_text(json.dumps(data, indent=2))
-          print("✅ apis.json updated")
+          print("✅ apis.json updated:", "$DJANGO_ABS")
           PYEOF
 
-      # ── 10. Run API response time tests ───────────────────────────────────
+      # ── 11. Run API response time tests ───────────────────────────────────
+      #        mvn verify uses maven-failsafe-plugin.
+      #        If ANY test fails (slow endpoint or wrong status), Failsafe
+      #        returns a non-zero exit code → this step fails → GitHub marks
+      #        the check as FAILED → branch protection blocks the merge.
       - name: Run API Response Time Tests
+        id: api_tests
         env:
-          # Pass email credentials as secrets — never hardcode in apis.json
           SMTP_USER:     ${{ secrets.SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           EMAIL_TO:      ${{ secrets.EMAIL_TO }}
-        run: mvn verify
+        run: |
+          set +e   # Don't exit immediately so we can capture the exit code
+          mvn verify --no-transfer-progress 2>&1 | tee mvn-output.txt
+          MVN_EXIT=${PIPESTATUS[0]}
+          set -e
 
-      # ── 11. Upload test reports (always, even on failure) ─────────────────
+          echo "mvn_exit=$MVN_EXIT" >> $GITHUB_OUTPUT
+
+          if [ $MVN_EXIT -ne 0 ]; then
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "❌  MERGE BLOCKED — API tests failed!"
+            echo "    One or more endpoints exceeded the response time"
+            echo "    threshold or returned an unexpected status code."
+            echo "    Check the email report for full details."
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit $MVN_EXIT   # Re-fail so GitHub marks this check as failed
+          else
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "✅  All APIs passed! Merge is allowed."
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          fi
+
+      # ── 12. Post PR comment with quick summary ────────────────────────────
+      - name: Post PR Comment
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const output = fs.readFileSync('mvn-output.txt', 'utf8');
+
+            // Extract summary line from Maven output
+            const passMatch  = output.match(/Passed=(\d+)/);
+            const failMatch  = output.match(/Failed=(\d+)/);
+            const slowMatch  = output.match(/Slow[^:]*:\s*(\d+)/);
+            const totalMatch = output.match(/Total=(\d+)/);
+            const threshMatch = output.match(/Threshold:\s*(\d+)ms/);
+
+            const passed    = passMatch  ? passMatch[1]  : '?';
+            const failed    = failMatch  ? failMatch[1]  : '?';
+            const slow      = slowMatch  ? slowMatch[1]  : '?';
+            const total     = totalMatch ? totalMatch[1] : '?';
+            const threshold = threshMatch ? threshMatch[1] : '800';
+            const exitCode  = '${{ steps.api_tests.outputs.mvn_exit }}';
+            const didPass   = exitCode === '0';
+
+            const statusLine = didPass
+              ? '## ✅ API Response Time Check — PASSED\nAll endpoints are within the response time threshold. Merge is allowed.'
+              : `## ❌ API Response Time Check — FAILED\nOne or more endpoints exceeded the **${threshold}ms** threshold or returned an unexpected status. **Merge is blocked.**`;
+
+            const body = `${statusLine}
+
+            | Metric | Value |
+            |--------|-------|
+            | Total APIs tested | ${total} |
+            | ✅ Passed | ${passed} |
+            | ❌ Failed | ${failed} |
+            | 🐢 Slow (>${threshold}ms) | ${slow} |
+
+            > 📧 Full HTML report sent to the configured email address.
+            > 🔍 See the **Run API Response Time Tests** step logs for per-endpoint details.`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      # ── 13. Upload failsafe reports (always, even on failure) ─────────────
       - name: Upload Test Reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: api-test-reports
-          path: target/failsafe-reports/
+          name: api-test-reports-${{ github.run_number }}
+          path: |
+            target/failsafe-reports/
+            mvn-output.txt
+          retention-days: 30
