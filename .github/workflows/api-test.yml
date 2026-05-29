@@ -204,7 +204,7 @@ jobs:
         if: always() && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.DJANGO_REPO_TOKEN }}   # ← change this
           script: |
             const fs = require('fs');
             let output = '';
