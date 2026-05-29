@@ -1,0 +1,16 @@
+stages:
+  - test
+
+api-response-time-test:
+  stage: test
+  image: maven:3.9.6-eclipse-temurin-17
+  script:
+    - mvn verify
+  only:
+    - merge_requests
+    - main
+  artifacts:
+    when: always
+    paths:
+      - target/failsafe-reports/
+    expire_in: 7 days

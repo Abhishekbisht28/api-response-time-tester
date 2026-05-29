@@ -1,0 +1,123 @@
+{
+  "baseUrl": "http://localhost:8080",
+  "authToken": "Bearer your_token_here",
+  "thresholdMs": 800,
+  "emailReport": {
+    "from": "ci-bot@yourcompany.com",
+    "to": "team@yourcompany.com",
+    "smtpHost": "smtp.gmail.com",
+    "smtpPort": 587,
+    "smtpUser": "your@gmail.com",
+    "smtpPassword": "your_app_password"
+  },
+  "apis": [
+    {
+      "name": "Get All Users",
+      "method": "GET",
+      "endpoint": "/api/users",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": null,
+      "expectedStatusCode": 200
+    },
+    {
+      "name": "Get User By ID",
+      "method": "GET",
+      "endpoint": "/api/users/1",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": null,
+      "expectedStatusCode": 200
+    },
+    {
+      "name": "Create User",
+      "method": "POST",
+      "endpoint": "/api/users",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "name": "John Doe",
+        "email": "john@example.com"
+      },
+      "expectedStatusCode": 201
+    },
+    {
+      "name": "Update User",
+      "method": "PUT",
+      "endpoint": "/api/users/1",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "name": "John Updated"
+      },
+      "expectedStatusCode": 200
+    },
+    {
+      "name": "Delete User",
+      "method": "DELETE",
+      "endpoint": "/api/users/1",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": null,
+      "expectedStatusCode": 204
+    },
+    {
+      "name": "Get All Products",
+      "method": "GET",
+      "endpoint": "/api/products",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": null,
+      "expectedStatusCode": 200
+    },
+    {
+      "name": "Get All Orders",
+      "method": "GET",
+      "endpoint": "/api/orders",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": null,
+      "expectedStatusCode": 200
+    },
+    {
+      "name": "Create Order",
+      "method": "POST",
+      "endpoint": "/api/orders",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "productId": 1,
+        "quantity": 2
+      },
+      "expectedStatusCode": 201
+    },
+    {
+      "name": "Get Payments",
+      "method": "GET",
+      "endpoint": "/api/payments",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": null,
+      "expectedStatusCode": 200
+    },
+    {
+      "name": "Health Check",
+      "method": "GET",
+      "endpoint": "/api/health",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": null,
+      "expectedStatusCode": 200
+    }
+  ]
+}
