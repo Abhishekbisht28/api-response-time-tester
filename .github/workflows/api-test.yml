@@ -12,8 +12,8 @@ jobs:
 
     env:
       # ── EDIT THESE TWO LINES ──────────────────────────────────────────────
-      DJANGO_REPO: your-github-username/your-django-repo   # e.g. Abhishekbisht28/my-django-app
-      DJANGO_DIR:  django-app                              # local folder name after checkout
+      DJANGO_REPO: Abhishekbisht28/testapi  # e.g. Abhishekbisht28/my-django-app
+      DJANGO_DIR:  testapi                            # local folder name after checkout
       # ─────────────────────────────────────────────────────────────────────
 
     steps:
