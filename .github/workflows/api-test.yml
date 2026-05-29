@@ -10,16 +10,111 @@ jobs:
   api-response-time-test:
     runs-on: ubuntu-latest
 
+    env:
+      # ── EDIT THESE TWO LINES ──────────────────────────────────────────────
+      DJANGO_REPO: your-github-username/your-django-repo   # e.g. Abhishekbisht28/my-django-app
+      DJANGO_DIR:  django-app                              # local folder name after checkout
+      # ─────────────────────────────────────────────────────────────────────
+
     steps:
-      - name: Checkout Code
+
+      # ── 1. Checkout this tester repo ──────────────────────────────────────
+      - name: Checkout Tester Repo
         uses: actions/checkout@v4
 
+      # ── 2. Checkout your Django repo (private) ────────────────────────────
+      #       Uses a Personal Access Token stored as a GitHub Secret.
+      #       Go to: Settings → Secrets → Actions → New secret
+      #       Name it DJANGO_REPO_TOKEN, paste your PAT as the value.
+      #       (Create PAT at: github.com/settings/tokens → Contents: read)
+      - name: Checkout Django Repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.DJANGO_REPO }}
+          token:      ${{ secrets.DJANGO_REPO_TOKEN }}
+          path:       ${{ env.DJANGO_DIR }}
+
+      # ── 3. Set up Python ──────────────────────────────────────────────────
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # ── 4. Install Django dependencies (auto-detects all formats) ─────────
+      - name: Install Django Dependencies
+        working-directory: ${{ env.DJANGO_DIR }}
+        run: |
+          python -m pip install --upgrade pip
+
+          if [ -f requirements.txt ]; then
+            echo "📦 Installing from requirements.txt"
+            pip install -r requirements.txt
+
+          elif [ -f Pipfile ]; then
+            echo "📦 Installing from Pipfile"
+            pip install pipenv
+            pipenv install --deploy --ignore-pipfile
+            # Make packages available outside virtualenv
+            pip install -r <(pipenv requirements)
+
+          elif [ -f pyproject.toml ]; then
+            echo "📦 Installing from pyproject.toml (Poetry)"
+            pip install poetry
+            poetry config virtualenvs.create false
+            poetry install --no-interaction --no-ansi
+
+          else
+            echo "⚠ No dependency file found. Installing Django + DRF only."
+            pip install django djangorestframework
+          fi
+
+      # ── 5. Apply Django migrations ────────────────────────────────────────
+      - name: Apply Django Migrations
+        working-directory: ${{ env.DJANGO_DIR }}
+        env:
+          DJANGO_SETTINGS_MODULE: ${{ secrets.DJANGO_SETTINGS_MODULE }}  # e.g. myapp.settings
+          SECRET_KEY:             ${{ secrets.DJANGO_SECRET_KEY }}
+          DEBUG:                  "True"
+          DATABASE_URL:           ${{ secrets.DATABASE_URL }}             # optional
+        run: |
+          # Auto-detect the manage.py location
+          MANAGE=$(find . -name "manage.py" | head -1)
+          if [ -z "$MANAGE" ]; then
+            echo "❌ manage.py not found in ${{ env.DJANGO_DIR }}"
+            exit 1
+          fi
+          echo "✅ Found manage.py at: $MANAGE"
+          python "$MANAGE" migrate --run-syncdb --no-input
+
+      # ── 6. Start Django server in background ──────────────────────────────
+      - name: Start Django Server
+        working-directory: ${{ env.DJANGO_DIR }}
+        env:
+          DJANGO_SETTINGS_MODULE: ${{ secrets.DJANGO_SETTINGS_MODULE }}
+          SECRET_KEY:             ${{ secrets.DJANGO_SECRET_KEY }}
+          DEBUG:                  "True"
+          DATABASE_URL:           ${{ secrets.DATABASE_URL }}
+        run: |
+          MANAGE=$(find . -name "manage.py" | head -1)
+          python "$MANAGE" runserver 0.0.0.0:8000 &
+          echo "⏳ Waiting for Django to be ready..."
+          # Poll until the server responds (max 30 seconds)
+          for i in $(seq 1 30); do
+            if curl -s http://localhost:8000 > /dev/null 2>&1; then
+              echo "✅ Django server is up!"
+              break
+            fi
+            sleep 1
+          done
+
+      # ── 7. Set up Java 17 ─────────────────────────────────────────────────
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
-          distribution: 'temurin'
+          java-version:  '17'
+          distribution:  'temurin'
 
+      # ── 8. Cache Maven dependencies ───────────────────────────────────────
       - name: Cache Maven Dependencies
         uses: actions/cache@v3
         with:
@@ -28,19 +123,35 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-maven-
 
-      # Optional: Start your application before running tests
-      # - name: Start Application
-      #   run: mvn spring-boot:run &
-      #   # Wait for app to be ready
-      # - name: Wait for App
-      #   run: sleep 15
+      # ── 9. Patch apis.json to point at the checked-out Django source ──────
+      #       ApiScanner reads projectPath to find urls.py files.
+      #       We overwrite it at runtime so you never need to hardcode a path.
+      - name: Configure Scanner Path
+        run: |
+          DJANGO_ABS="${{ github.workspace }}/${{ env.DJANGO_DIR }}"
+          echo "🔧 Setting projectPath → $DJANGO_ABS"
+          # Use Python (already installed) to do safe JSON editing
+          python3 - <<PYEOF
+          import json, pathlib
+          cfg = pathlib.Path("src/test/resources/apis.json")
+          data = json.loads(cfg.read_text())
+          data["scanConfig"]["projectPath"] = "$DJANGO_ABS"
+          cfg.write_text(json.dumps(data, indent=2))
+          print("✅ apis.json updated")
+          PYEOF
 
+      # ── 10. Run API response time tests ───────────────────────────────────
       - name: Run API Response Time Tests
+        env:
+          # Pass email credentials as secrets — never hardcode in apis.json
+          SMTP_USER:     ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_TO:      ${{ secrets.EMAIL_TO }}
         run: mvn verify
-        # If any API exceeds 800ms or returns wrong status → build fails → merge blocked
 
+      # ── 11. Upload test reports (always, even on failure) ─────────────────
       - name: Upload Test Reports
-        if: always()   # upload even if tests fail
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: api-test-reports
