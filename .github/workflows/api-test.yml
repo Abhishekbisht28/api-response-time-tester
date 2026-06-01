@@ -20,6 +20,7 @@ jobs:
     env:
       DJANGO_REPO: Abhishekbisht28/testapi
       DJANGO_DIR:  testapi
+      BASE_URL:    http://localhost:8000
 
     steps:
 
@@ -123,7 +124,7 @@ jobs:
 
           echo "⏳ Waiting for Django to be ready..."
           for i in $(seq 1 30); do
-            if curl -sf http://localhost:8000/api/health/ > /dev/null 2>&1; then
+            if curl -sf http://localhost:8000/inbound-dashboard > /dev/null 2>&1; then
               echo "✅ Django server is up! (attempt $i)"
               break
             fi
@@ -156,12 +157,13 @@ jobs:
           DJANGO_ABS="${{ github.workspace }}/${{ env.DJANGO_DIR }}"
           echo "🔧 Setting projectPath → $DJANGO_ABS"
           python3 - <<PYEOF
-          import json, pathlib
+          import json, pathlib, os
           cfg = pathlib.Path("src/test/resources/apis.json")
           data = json.loads(cfg.read_text())
           data["scanConfig"]["projectPath"] = "$DJANGO_ABS"
+          data["baseUrl"] = os.environ.get("BASE_URL", "http://localhost:8000")
           cfg.write_text(json.dumps(data, indent=2))
-          print("✅ apis.json updated:", "$DJANGO_ABS")
+          print("✅ apis.json updated — projectPath:", "$DJANGO_ABS", "| baseUrl:", data["baseUrl"])
           PYEOF
 
       # ── 11. Run API response time tests ───────────────────────────────────
