@@ -1,9 +1,9 @@
 {
-  "baseUrl": "http://localhost:8000",
-  "authToken": "Bearer your_token_here",
-  "thresholdMs": 800,
+  "baseUrl": "http://127.0.0.1:9000/api",
+  "authToken": "",
+  "thresholdMs": 1500,
   "scanConfig": {
-    "projectPath": "C:\\\\Users\\\\Abhishek Bisht\\\\IdeaProjects\\\\testapi",
+    "projectPath": "C:/Users/Abhishek Bisht/IdeaProjects/testapi",
     "urlsFile": "urls.py",
     "defaultExpectedStatus": {
       "GET": 200,
@@ -26,27 +26,5 @@
     "smtpPort": 587,
     "smtpUser": "abhibisht2728@gmail.com",
     "smtpPassword": "fykevtmatpenyrav"
-  },
-  "apis": [
-    {
-      "name": "Get Users",
-      "method": "GET",
-      "endpoint": "/users",
-      "headers": {
-        "Content-Type": "application/json"
-      },
-      "body": null,
-      "expectedStatusCode": 200
-    },
-    {
-      "name": "Get Post",
-      "method": "GET",
-      "endpoint": "/posts/1",
-      "headers": {
-        "Content-Type": "application/json"
-      },
-      "body": null,
-      "expectedStatusCode": 200
-    }
-  ]
-}
+  }
+}M
