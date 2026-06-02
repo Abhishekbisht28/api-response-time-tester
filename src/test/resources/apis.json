@@ -1,9 +1,7 @@
-
-
 {
   "baseUrl": "http://127.0.0.1:9000/api",
   "authToken": "",
-  "thresholdMs": 1500,
+  "thresholdMs": 800,
   "scanConfig": {
     "projectPath": "../",
     "urlsFile": "store/urls.py",
@@ -19,15 +17,14 @@
       "{pk}": "1",
       "{slug}": "test-slug",
       "{uuid}": "00000000-0000-0000-0000-000000000001"
-    },
-
-    "emailReport": {
-      "from": "abhibisht2728@gmail.com",
-      "to": "bishtcoom@gmail.com",
-      "smtpHost": "smtp.gmail.com",
-      "smtpPort": 587,
-      "smtpUser": "abhibisht2728@gmail.com",
-      "smtpPassword": "fykevtmatpenyrav"
     }
+  },
+  "emailReport": {
+    "from": "abhibisht2728@gmail.com",
+    "to": "bishtcoom@gmail.com",
+    "smtpHost": "smtp.gmail.com",
+    "smtpPort": 587,
+    "smtpUser": "abhibisht2728@gmail.com",
+    "smtpPassword": "fykevtmatpenyrav"
   }
 }
