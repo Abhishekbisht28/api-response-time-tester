@@ -1,0 +1,73 @@
+mvn cname: API Response Time Gate
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  api-response-time-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Django repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Clone API response tester
+        run: |
+          git clone https://github.com/Abhishekbisht28/api-response-time-tester.git
+
+      - name: Fetch base branch
+        run: |
+          git fetch origin master
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Django dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            pip install django djangorestframework
+          fi
+
+      - name: Start Django server
+        run: |
+          python manage.py migrate --run-syncdb --no-input || true
+          python manage.py runserver 127.0.0.1:9000 &
+          sleep 8
+
+      - name: Verify Django API is running
+        run: |
+          curl -f http://127.0.0.1:9000/api/campaign-subscribers/ || true
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Run changed API response tests
+        run: |
+          cd api-response-time-tester
+          mvn clean verify
+
+      - name: Upload Extent Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: extent-api-report
+          path: |
+            api-response-time-tester/target/ExtentReport.html
+            api-response-time-tester/target/failsafe-reports/
+            api-response-time-tester/target/
+          if-no-files-found: warn

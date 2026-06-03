@@ -1,0 +1,32 @@
+{
+  "baseUrl": "http://127.0.0.1:9000/api",
+  "authToken": "",
+  "thresholdMs": 800,
+  "scanConfig": {
+    "projectPath": "C:/Users/Abhishek Bisht/IdeaProjects/testapi",
+    "urlsFile": "store/urls.py",
+    "changedOnly": true,
+    "baseBranch": "master",
+    "defaultExpectedStatus": {
+      "GET": 200,
+      "POST": 201,
+      "PUT": 200,
+      "PATCH": 200,
+      "DELETE": 204
+    },
+    "pathParamDefaults": {
+      "{id}": "1",
+      "{pk}": "1",
+      "{slug}": "test-slug",
+      "{uuid}": "00000000-0000-0000-0000-000000000001"
+    }
+  },
+  "emailReport": {
+    "from": "abhibisht2728@gmail.com",
+    "to": "bishtcoom@gmail.com",
+    "smtpHost": "smtp.gmail.com",
+    "smtpPort": 587,
+    "smtpUser": "abhibisht2728@gmail.com",
+    "smtpPassword": "fykevtmatpenyrav"
+  }
+}
