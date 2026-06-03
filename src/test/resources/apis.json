@@ -3,8 +3,10 @@
   "authToken": "",
   "thresholdMs": 800,
   "scanConfig": {
-    "projectPath": "../",
+    "projectPath": "C:/Users/Abhishek Bisht/IdeaProjects/testapi",
     "urlsFile": "store/urls.py",
+    "changedOnly": true,
+    "baseBranch": "origin/master",
     "defaultExpectedStatus": {
       "GET": 200,
       "POST": 201,

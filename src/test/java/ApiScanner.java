@@ -5,14 +5,15 @@ import java.util.*;
 import java.util.regex.*;
 
 /**
- * Fully automatic Django/DRF API scanner.
+ * Django / DRF API scanner.
  *
- * It discovers APIs directly from Django code:
- *  - router.register(...) ViewSet routes
- *  - path(...) / re_path(...)
- *  - include('app.urls') recursion
- *  - @api_view([...]) methods on function views
- *  - basic expected status inference from method and function body
+ * Modes:
+ * 1. Full scan       -> scans all routes from urls.py.
+ * 2. Changed-only   -> scans all routes, detects changed Python symbols from git diff,
+ *                      then tests only impacted APIs.
+ *
+ * This is designed for GitHub Actions PR checks:
+ *   git diff origin/master...HEAD
  */
 public class ApiScanner {
 
@@ -36,6 +37,14 @@ public class ApiScanner {
             "class\\s+(\\w+)\\s*\\(([^)]*)\\)"
     );
 
+    private static final Pattern DEF_PATTERN = Pattern.compile(
+            "^\\s*def\\s+(\\w+)\\s*\\("
+    );
+
+    private static final Pattern CLASS_PATTERN = Pattern.compile(
+            "^\\s*class\\s+(\\w+)\\s*\\("
+    );
+
     private static final Pattern HTTP_METHOD_NAMES_PATTERN = Pattern.compile(
             "http_method_names\\s*=\\s*\\[([^\\]]+)\\]"
     );
@@ -50,7 +59,20 @@ public class ApiScanner {
         }
 
         ApiConfig.ScanConfig sc = config.scanConfig;
-        Path projectRoot = Paths.get(sc.projectPath).toAbsolutePath().normalize();
+
+        String cleanedProjectPath = cleanConfigValue(sc.projectPath);
+        String cleanedUrlsFile = cleanConfigValue(sc.urlsFile != null ? sc.urlsFile : "urls.py");
+
+        if (cleanedProjectPath == null || cleanedProjectPath.isBlank()) {
+            throw new RuntimeException("scanConfig.projectPath is missing in apis.json");
+        }
+
+        System.out.println("projectPath = [" + cleanedProjectPath + "]");
+        System.out.println("urlsFile    = [" + cleanedUrlsFile + "]");
+        System.out.println("changedOnly = [" + Boolean.TRUE.equals(sc.changedOnly) + "]");
+        System.out.println("baseBranch  = [" + (sc.baseBranch == null ? "origin/master" : sc.baseBranch) + "]");
+
+        Path projectRoot = Paths.get(cleanedProjectPath).toAbsolutePath().normalize();
 
         if (!Files.exists(projectRoot)) {
             throw new RuntimeException(
@@ -61,9 +83,9 @@ public class ApiScanner {
 
         System.out.println("🔍 Scanning Django project : " + projectRoot);
 
-        Path entryUrls = findFile(projectRoot, sc.urlsFile != null ? sc.urlsFile : "urls.py");
+        Path entryUrls = findFile(projectRoot, cleanedUrlsFile);
         if (entryUrls == null) {
-            throw new RuntimeException("Could not find urls file: " + sc.urlsFile + " under " + projectRoot);
+            throw new RuntimeException("Could not find urls file: " + cleanedUrlsFile + " under " + projectRoot);
         }
         System.out.println("📄 Entry URLs file         : " + entryUrls);
 
@@ -78,9 +100,227 @@ public class ApiScanner {
         parseUrlFile(entryUrls, "", projectRoot, routes, visited, viewSets, apiFunctions);
 
         System.out.println("✅ Total routes discovered : " + routes.size());
+
+        if (Boolean.TRUE.equals(sc.changedOnly)) {
+            ChangedImpact impact = detectChangedImpact(projectRoot, sc.baseBranch == null || sc.baseBranch.isBlank() ? "origin/master" : sc.baseBranch);
+
+            System.out.println("──────────────────────────────────────────────────");
+            System.out.println("🧩 Changed files detected : " + impact.changedFiles.size());
+            for (String f : impact.changedFiles) {
+                System.out.println("   • " + f);
+            }
+
+            System.out.println("🧠 Impacted view symbols  : " + impact.symbols);
+            System.out.println("🔗 Impacted URL paths     : " + impact.routeHints);
+
+            routes = filterImpactedRoutes(routes, impact);
+
+            System.out.println("✅ Impacted APIs selected : " + routes.size());
+        }
+
         System.out.println("──────────────────────────────────────────────────");
 
         return toApiDefinitions(routes, config);
+    }
+
+    private static List<RouteEntry> filterImpactedRoutes(List<RouteEntry> routes, ChangedImpact impact) {
+        if (impact.testAllBecauseUrlFileChanged) {
+            System.out.println("⚠ URL configuration changed broadly. Testing all discovered routes.");
+            return routes;
+        }
+
+        List<RouteEntry> filtered = new ArrayList<>();
+
+        for (RouteEntry r : routes) {
+            String baseView = r.viewName == null ? "" : r.viewName.replaceAll("\\s*\\(.*\\)", "").trim();
+
+            boolean symbolMatch = impact.symbols.contains(baseView);
+
+            boolean pathMatch = false;
+            for (String hint : impact.routeHints) {
+                if (hint == null || hint.isBlank()) continue;
+                String normalizedHint = ensureLeadingSlash(hint);
+                if (r.path.equals(normalizedHint) ||
+                        r.path.startsWith(normalizedHint) ||
+                        normalizedHint.startsWith(r.path.replace("{pk}", "").replace("{id}", ""))) {
+                    pathMatch = true;
+                    break;
+                }
+            }
+
+            if (symbolMatch || pathMatch) {
+                filtered.add(r);
+            }
+        }
+
+        return filtered;
+    }
+
+    private static ChangedImpact detectChangedImpact(Path projectRoot, String baseBranch) {
+        ChangedImpact impact = new ChangedImpact();
+
+        try {
+            List<String> changedFiles = runGit(projectRoot, "diff", "--name-only", baseBranch + "...HEAD");
+            if (changedFiles.isEmpty()) {
+                // fallback for local uncommitted work
+                changedFiles = runGit(projectRoot, "diff", "--name-only", "HEAD");
+            }
+
+            for (String raw : changedFiles) {
+                String file = raw.trim().replace("\\", "/");
+                if (file.isBlank()) continue;
+                impact.changedFiles.add(file);
+
+                if (!file.endsWith(".py")) continue;
+
+                Path changedPath = projectRoot.resolve(file).normalize();
+                if (!Files.exists(changedPath)) continue;
+
+                if (file.endsWith("urls.py")) {
+                    addUrlHintsFromGitDiff(projectRoot, baseBranch, file, impact);
+                    if (impact.routeHints.isEmpty()) {
+                        impact.testAllBecauseUrlFileChanged = true;
+                    }
+                } else {
+                    addChangedSymbolsFromGitDiff(projectRoot, baseBranch, file, changedPath, impact);
+                }
+            }
+
+        } catch (Exception e) {
+            System.out.println("⚠ Changed-only detection failed: " + e.getMessage());
+            System.out.println("⚠ Falling back to full scan.");
+            impact.testAllBecauseUrlFileChanged = true;
+        }
+
+        return impact;
+    }
+
+    private static void addUrlHintsFromGitDiff(Path projectRoot, String baseBranch, String file, ChangedImpact impact) {
+        try {
+            List<String> diff = runGit(projectRoot, "diff", "--unified=0", baseBranch + "...HEAD", "--", file);
+
+            for (String line : diff) {
+                if (!line.startsWith("+") || line.startsWith("+++")) continue;
+
+                Matcher pathMatcher = PATH_PATTERN.matcher(line.substring(1));
+                if (pathMatcher.find()) {
+                    String path = pathMatcher.group(1);
+                    if (path != null && !path.isBlank()) {
+                        impact.routeHints.add(path);
+                    }
+
+                    String viewPart = pathMatcher.group(2).trim();
+                    String funcOrClass = cleanViewName(viewPart.replaceAll("\\.as_view.*", "").replaceAll("[,(].*", ""));
+                    if (!funcOrClass.isBlank() && !"include".equals(funcOrClass)) {
+                        impact.symbols.add(funcOrClass);
+                    }
+                }
+
+                Matcher routerMatcher = ROUTER_REGISTER_PATTERN.matcher(line.substring(1));
+                if (routerMatcher.find()) {
+                    impact.routeHints.add(routerMatcher.group(1));
+                    impact.symbols.add(routerMatcher.group(2).trim());
+                }
+            }
+        } catch (Exception e) {
+            System.out.println("⚠ Could not inspect changed urls.py diff: " + e.getMessage());
+            impact.testAllBecauseUrlFileChanged = true;
+        }
+    }
+
+    private static void addChangedSymbolsFromGitDiff(Path projectRoot, String baseBranch, String file, Path changedPath, ChangedImpact impact) {
+        try {
+            Set<Integer> changedLines = getChangedLineNumbers(projectRoot, baseBranch, file);
+            if (changedLines.isEmpty()) return;
+
+            List<String> lines = Files.readAllLines(changedPath);
+
+            for (Integer lineNo : changedLines) {
+                String symbol = findEnclosingSymbol(lines, lineNo);
+                if (symbol != null && !symbol.isBlank()) {
+                    impact.symbols.add(symbol);
+                }
+            }
+        } catch (Exception e) {
+            System.out.println("⚠ Could not inspect changed Python file " + file + ": " + e.getMessage());
+        }
+    }
+
+    private static Set<Integer> getChangedLineNumbers(Path projectRoot, String baseBranch, String file) throws Exception {
+        Set<Integer> lines = new LinkedHashSet<>();
+        List<String> diff = runGit(projectRoot, "diff", "--unified=0", baseBranch + "...HEAD", "--", file);
+
+        Pattern hunk = Pattern.compile("@@ -\\d+(?:,\\d+)? \\+(\\d+)(?:,(\\d+))? @@");
+        int currentLine = -1;
+
+        for (String line : diff) {
+            Matcher m = hunk.matcher(line);
+            if (m.find()) {
+                currentLine = Integer.parseInt(m.group(1));
+                continue;
+            }
+
+            if (currentLine < 0) continue;
+
+            if (line.startsWith("+") && !line.startsWith("+++")) {
+                lines.add(currentLine);
+                currentLine++;
+            } else if (line.startsWith("-") && !line.startsWith("---")) {
+                // removed line does not advance new-file line number
+            } else {
+                currentLine++;
+            }
+        }
+
+        return lines;
+    }
+
+    private static String findEnclosingSymbol(List<String> lines, int lineNoOneBased) {
+        int idx = Math.min(Math.max(lineNoOneBased - 1, 0), lines.size() - 1);
+
+        for (int i = idx; i >= 0; i--) {
+            String line = lines.get(i);
+
+            Matcher def = DEF_PATTERN.matcher(line);
+            if (def.find()) return def.group(1);
+
+            Matcher cls = CLASS_PATTERN.matcher(line);
+            if (cls.find()) return cls.group(1);
+        }
+
+        return null;
+    }
+
+    private static List<String> runGit(Path workingDir, String... args) throws Exception {
+        List<String> cmd = new ArrayList<>();
+        cmd.add("git");
+        cmd.addAll(Arrays.asList(args));
+
+        ProcessBuilder pb = new ProcessBuilder(cmd);
+        pb.directory(workingDir.toFile());
+        pb.redirectErrorStream(true);
+
+        Process p = pb.start();
+        String output;
+        try (BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = br.readLine()) != null) {
+                sb.append(line).append("\n");
+            }
+            output = sb.toString();
+        }
+
+        int exit = p.waitFor();
+        if (exit != 0) {
+            throw new RuntimeException("git " + String.join(" ", args) + " failed: " + output);
+        }
+
+        List<String> lines = new ArrayList<>();
+        for (String l : output.split("\\R")) {
+            if (!l.trim().isBlank()) lines.add(l);
+        }
+        return lines;
     }
 
     private static void parseUrlFile(
@@ -321,10 +561,28 @@ public class ApiScanner {
     }
 
     private static String cleanViewName(String viewPart) {
-        String cleaned = viewPart.trim();
+        String cleaned = viewPart == null ? "" : viewPart.trim();
         if (cleaned.contains(".")) cleaned = cleaned.substring(cleaned.lastIndexOf('.') + 1);
         cleaned = cleaned.replaceAll("[^A-Za-z0-9_]", "");
         return cleaned;
+    }
+
+    private static String cleanConfigValue(String value) {
+        if (value == null) return null;
+        String cleaned = value.trim();
+
+        // Fix accidental copied JSON line:
+        // "projectPath": "C:/Users/..."
+        Matcher m = Pattern.compile("\"?(projectPath|urlsFile)\"?\\s*:\\s*\"([^\"]+)\"").matcher(cleaned);
+        if (m.find()) {
+            return m.group(2).trim();
+        }
+
+        if ((cleaned.startsWith("\"") && cleaned.endsWith("\"")) ||
+                (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
+            cleaned = cleaned.substring(1, cleaned.length() - 1);
+        }
+        return cleaned.trim();
     }
 
     private static String joinPaths(String prefix, String suffix) {
@@ -337,6 +595,12 @@ public class ApiScanner {
         String joined = p.isEmpty() ? "/" + s : p + "/" + s;
         if (!joined.startsWith("/")) joined = "/" + joined;
         return joined.replaceAll("//+", "/");
+    }
+
+    private static String ensureLeadingSlash(String path) {
+        String p = path == null ? "" : path.trim();
+        if (!p.startsWith("/")) p = "/" + p;
+        return p.replaceAll("//+", "/");
     }
 
     private static String normalizePath(String path, Map<String, String> paramDefaults) {
@@ -444,6 +708,13 @@ public class ApiScanner {
         return body;
     }
 
+    private static class ChangedImpact {
+        final Set<String> changedFiles = new LinkedHashSet<>();
+        final Set<String> symbols = new LinkedHashSet<>();
+        final Set<String> routeHints = new LinkedHashSet<>();
+        boolean testAllBecauseUrlFileChanged = false;
+    }
+
     private static class RouteEntry {
         final String path;
         final String method;
@@ -470,7 +741,7 @@ public class ApiScanner {
 
         int expectedStatus(String method) {
             if (detectedStatus > 0) return detectedStatus;
-            return method.equals("DELETE") ? 204 : 200;
+            return method.equals("DELETE") ? 204 : expectedForMethod(method);
         }
     }
 

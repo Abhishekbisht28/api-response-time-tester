@@ -6,12 +6,10 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Loads apis.json. SMTP credentials are overridden by environment variables
- * when running in GitHub Actions so they never need to be hardcoded.
+ * Loads apis.json.
  *
- *  SMTP_USER      → emailReport.smtpUser  + emailReport.from
- *  SMTP_PASSWORD  → emailReport.smtpPassword
- *  EMAIL_TO       → emailReport.to
+ * SMTP credentials should come from environment variables / GitHub Secrets:
+ * SMTP_USER, SMTP_PASSWORD, EMAIL_TO
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class ApiConfig {
@@ -22,7 +20,7 @@ public class ApiConfig {
     public ScanConfig          scanConfig;
     public EmailConfig         emailReport;
 
-    // Populated at runtime by ApiScanner — not in JSON
+    // Populated at runtime by ApiScanner
     public List<ApiDefinition> apis;
 
     public static ApiConfig load() throws Exception {
@@ -32,14 +30,11 @@ public class ApiConfig {
                 .getResourceAsStream("apis.json");
 
         if (is == null) {
-            throw new RuntimeException(
-                "apis.json not found in src/test/resources/."
-            );
+            throw new RuntimeException("apis.json not found in src/test/resources.");
         }
 
         ApiConfig config = mapper.readValue(is, ApiConfig.class);
 
-        // ── Override email config from environment variables (GitHub Secrets) ──
         if (config.emailReport == null) config.emailReport = new EmailConfig();
 
         String smtpUser = System.getenv("SMTP_USER");
@@ -48,7 +43,7 @@ public class ApiConfig {
 
         if (smtpUser != null && !smtpUser.isBlank()) {
             config.emailReport.smtpUser = smtpUser;
-            config.emailReport.from     = smtpUser;   // from must match authenticated user
+            config.emailReport.from = smtpUser;
         }
         if (smtpPass != null && !smtpPass.isBlank()) {
             config.emailReport.smtpPassword = smtpPass;
@@ -57,15 +52,17 @@ public class ApiConfig {
             config.emailReport.to = emailTo;
         }
 
+        if (config.thresholdMs <= 0) config.thresholdMs = 1500;
+
         return config;
     }
 
-    // ── Nested config classes ─────────────────────────────────────────────────
-
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class ScanConfig {
-        public String              projectPath;
-        public String              urlsFile;
+        public String               projectPath;
+        public String               urlsFile;
+        public Boolean              changedOnly;
+        public String               baseBranch;
         public Map<String, Integer> defaultExpectedStatus;
         public Map<String, String>  pathParamDefaults;
     }

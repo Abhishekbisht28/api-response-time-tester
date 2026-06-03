@@ -163,3 +163,41 @@ If using Gmail as SMTP:
 
 - Java 17+
 - Maven 3.6+
+
+
+## Changed-only API testing
+
+This version can test only APIs impacted by the latest PR/push.
+
+`src/test/resources/apis.json`:
+
+```json
+{
+  "baseUrl": "http://127.0.0.1:9000/api",
+  "thresholdMs": 1500,
+  "scanConfig": {
+    "projectPath": "../",
+    "urlsFile": "store/urls.py",
+    "changedOnly": true,
+    "baseBranch": "origin/master"
+  }
+}
+```
+
+How it works:
+
+1. Runs `git diff origin/master...HEAD` inside the Django project.
+2. Finds changed `.py` files.
+3. Detects changed view functions/classes.
+4. Maps those symbols to Django routes discovered from `store/urls.py`.
+5. Tests only impacted APIs.
+6. Generates `target/ExtentReport.html`.
+
+For local Windows testing, copy `apis-local.json` to:
+
+```text
+src/test/resources/apis.json
+```
+
+For GitHub Actions, keep `apis-github.json` or the default `src/test/resources/apis.json`.
+
