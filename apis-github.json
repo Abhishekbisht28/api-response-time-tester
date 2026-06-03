@@ -3,7 +3,7 @@
   "authToken": "",
   "thresholdMs": 800,
   "scanConfig": {
-    "projectPath": "../",
+    "projectPath": "..",
     "urlsFile": "store/urls.py",
     "changedOnly": true,
     "baseBranch": "origin/master",
